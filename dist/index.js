@@ -30329,10 +30329,43 @@ local: ${config.local}
         core.endGroup();
     }
     /**
+     * Check if a GitHub repository exists and is accessible
+     */
+    async checkRepositoryExists(owner, repo) {
+        try {
+            const octokit = github.getOctokit(this.context.token);
+            await octokit.rest.repos.get({
+                owner,
+                repo
+            });
+            return true;
+        }
+        catch (error) {
+            if (error.status === 404) {
+                return false;
+            }
+            // For other errors (like auth issues), we'll let them surface later
+            core.warning(`Could not check repository ${owner}/${repo}: ${error.message}`);
+            return false;
+        }
+    }
+    /**
      * Clone opam-repository fork and sync with upstream
      */
-    cloneOpamRepository(forkUrl, localPath) {
+    async cloneOpamRepository(forkUrl, localPath, forkOwner) {
         core.startGroup('Cloning opam-repository fork');
+        // Check if the fork exists
+        const forkExists = await this.checkRepositoryExists(forkOwner, 'opam-repository');
+        if (!forkExists) {
+            core.error(`Fork ${forkOwner}/opam-repository does not exist or is not accessible.`);
+            core.error('');
+            core.error('To fix this:');
+            core.error(`1. Create a fork of ocaml/opam-repository at: https://github.com/ocaml/opam-repository/fork`);
+            core.error(`2. Make sure your GH_TOKEN has access to the fork`);
+            core.error('3. Verify your token has the "repo" scope enabled');
+            throw new Error(`Repository ${forkOwner}/opam-repository not found or not accessible`);
+        }
+        this.info(`Fork ${forkOwner}/opam-repository exists and is accessible`);
         // Create directory structure
         const gitDir = path_1.default.dirname(localPath);
         try {
@@ -30344,7 +30377,18 @@ local: ${config.local}
             // Try to proceed anyway, git clone might handle it
         }
         // Clone fork with shallow depth for faster cloning
-        this.exec(`git clone --depth 1 ${forkUrl} ${localPath}`);
+        try {
+            this.exec(`git clone --depth 1 ${forkUrl} ${localPath}`);
+        }
+        catch (error) {
+            core.error(`Failed to clone ${forkUrl}`);
+            core.error('');
+            core.error('Possible causes:');
+            core.error('1. Your GH_TOKEN might not have the "repo" scope');
+            core.error('2. The token might not have access to the fork');
+            core.error('3. The fork might be private (it should be public)');
+            throw error;
+        }
         // Set up upstream and sync
         const originalDir = process.cwd();
         try {
@@ -30491,7 +30535,7 @@ local: ${config.local}
             // Setup dune-release config
             this.setupDuneReleaseConfig(duneConfig);
             // Clone opam repository (even in dry-run to validate the setup)
-            this.cloneOpamRepository(duneConfig.remote, duneConfig.local);
+            await this.cloneOpamRepository(duneConfig.remote, duneConfig.local, duneConfig.user);
             // Distribute release archive
             core.startGroup('Distributing release archive');
             this.runDuneRelease('distrib', ['-p', packages, '--skip-tests', '--skip-lint']);
