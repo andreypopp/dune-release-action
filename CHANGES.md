@@ -5,12 +5,15 @@
 
 
 
+
+- Format changelog better by @davesnx ([#1](https://github.com/davesnx/dune-release-action/pull/1))
 - feat(update-changelog): use GitHub handles and link PRs by @davesnx ([#1](https://github.com/davesnx/dune-release-action/pull/1))
 - Detect previous tags by @davesnx ([#1](https://github.com/davesnx/dune-release-action/pull/1))
 - chore: update changelog by @davesnx ([#1](https://github.com/davesnx/dune-release-action/pull/1))
 - Fix unit tests by David Sancho Moreno (#1)
 - Add update-changelog by David Sancho Moreno (#1)
 - Push GUIDE.md by David Sancho Moreno
+
 ## v0.2.2 (2025-11-12)
 
 - Ensure opam-repository exists by @davesnx
