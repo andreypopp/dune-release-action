@@ -21,11 +21,9 @@ jobs:
           node-version: '20'
 
       - name: Install dependencies
-        working-directory: .github/scripts/release
         run: npm ci
 
       - name: Run tests
-        working-directory: .github/scripts/release
         run: npm test
 
   integration-tests:
@@ -135,10 +133,9 @@ jobs:
           node-version: '20'
 
       - name: Build the action
-        working-directory: .github/scripts/release
         run: |
           npm ci
-          npm run package
+          npm run build
 
       - name: Create test environment
         run: |
@@ -213,10 +210,10 @@ jobs:
 
       - name: Run action
         id: test-action
-        uses: ./.github/scripts/release
+        uses: ./
         with:
           github-token: ${{ github.token }}
-          package-name: ${{ matrix.scenario.inputs.package-name }}
+          packages: ${{ matrix.scenario.inputs.package-name }}
           to-opam-repository: ${{ matrix.scenario.inputs.to-opam-repository }}
           to-github-releases: ${{ matrix.scenario.inputs.to-github-releases }}
           changelog: ${{ matrix.scenario.inputs.changelog }}
