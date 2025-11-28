@@ -6,9 +6,7 @@
   "scripts": {
     "type-check": "tsc --noEmit",
     "test": "npx tsx --test lib/changelog.test.ts",
-    "build": "npm run build:dune-release && npm run build:update-changelog",
-    "build:dune-release": "ncc build src/main.ts -o dist --source-map --license licenses.txt",
-    "build:update-changelog": "ncc build src/update-changelog.ts -o update-changelog/dist --source-map",
+    "build": "ncc build src/main.ts -o dist --source-map --license licenses.txt",
     "build:watch": "ncc build src/main.ts -o dist --source-map --license licenses.txt --watch"
   },
   "dependencies": {
