@@ -1,0 +1,421 @@
+import * as core from '@actions/core';
+import Fs from 'fs';
+
+export interface ChangelogEntry {
+  version: string;
+  date?: string;
+  content: string;
+}
+
+export interface ChangelogValidation {
+  valid: boolean;
+  hasUnreleased: boolean;
+  hasVersionEntry: boolean;
+  versionContent?: string;
+  warnings: string[];
+  errors: string[];
+}
+
+/**
+ * Parse a changelog file (Markdown format)
+ * Supports formats like:
+ * ## v1.0.0 (2025-01-13)
+ * ## 1.0.0
+ * # Unreleased
+ */
+export function parseChangelog(changelogPath: string): ChangelogEntry[] {
+  try {
+    const content = Fs.readFileSync(changelogPath, 'utf-8');
+    const entries: ChangelogEntry[] = [];
+
+    // Split by headers (## or #)
+    const lines = content.split('\n');
+    let currentEntry: ChangelogEntry | null = null;
+    let currentContent: string[] = [];
+
+    for (const line of lines) {
+      // Match version headers: ## v1.0.0 or ## 1.0.0 or ## v1.0.0 (2025-01-13)
+      const versionMatch = line.match(/^##\s+v?(\d+\.\d+\.\d+(?:-[a-zA-Z0-9.]+)?)\s*(?:\(([^)]+)\))?/);
+      // Match unreleased header: # Unreleased or ## Unreleased
+      const unreleasedMatch = line.match(/^#{1,2}\s+Unreleased/i);
+
+      if (versionMatch || unreleasedMatch) {
+        // Save previous entry if exists
+        if (currentEntry) {
+          currentEntry.content = currentContent.join('\n').trim();
+          entries.push(currentEntry);
+        }
+
+        // Start new entry
+        if (versionMatch) {
+          currentEntry = {
+            version: versionMatch[1],
+            date: versionMatch[2],
+            content: ''
+          };
+        } else if (unreleasedMatch) {
+          currentEntry = {
+            version: 'unreleased',
+            content: ''
+          };
+        }
+        currentContent = [];
+      } else if (currentEntry) {
+        // Add content to current entry
+        currentContent.push(line);
+      }
+    }
+
+    // Save last entry
+    if (currentEntry) {
+      currentEntry.content = currentContent.join('\n').trim();
+      entries.push(currentEntry);
+    }
+
+    return entries;
+  } catch (error: any) {
+    throw new Error(`Failed to parse changelog: ${error.message}`);
+  }
+}
+
+/**
+ * Validate changelog for a specific version
+ */
+export function validateChangelog(
+  changelogPath: string,
+  expectedVersion: string
+): ChangelogValidation {
+  const validation: ChangelogValidation = {
+    valid: true,
+    hasUnreleased: false,
+    hasVersionEntry: false,
+    warnings: [],
+    errors: []
+  };
+
+  try {
+    // Check if file exists
+    if (!Fs.existsSync(changelogPath)) {
+      validation.valid = false;
+      validation.errors.push(`Changelog file not found: ${changelogPath}`);
+      return validation;
+    }
+
+    // Parse changelog
+    const entries = parseChangelog(changelogPath);
+
+    if (entries.length === 0) {
+      validation.valid = false;
+      validation.errors.push('Changelog is empty or could not be parsed');
+      return validation;
+    }
+
+    // Normalize version (remove 'v' prefix if present)
+    const normalizedVersion = expectedVersion.replace(/^v/, '');
+
+    // Check for unreleased content
+    const unreleasedEntry = entries.find(e => e.version === 'unreleased');
+    if (unreleasedEntry && unreleasedEntry.content.trim().length > 0) {
+      validation.hasUnreleased = true;
+      validation.warnings.push(
+        'Changelog has content in the Unreleased section. ' +
+        'Consider moving it to the version section or removing it.'
+      );
+    }
+
+    // Check for version entry
+    const versionEntry = entries.find(e =>
+      e.version === normalizedVersion ||
+      e.version === `v${normalizedVersion}`
+    );
+
+    if (!versionEntry) {
+      validation.valid = false;
+      validation.hasVersionEntry = false;
+      validation.errors.push(
+        `Changelog does not contain an entry for version ${expectedVersion}. ` +
+        `Found versions: ${entries.filter(e => e.version !== 'unreleased').map(e => e.version).join(', ')}`
+      );
+      return validation;
+    }
+
+    validation.hasVersionEntry = true;
+    validation.versionContent = versionEntry.content;
+
+    // Validate version entry has content
+    if (!versionEntry.content || versionEntry.content.trim().length === 0) {
+      validation.valid = false;
+      validation.errors.push(`Changelog entry for ${expectedVersion} is empty`);
+    }
+
+    // Warn if content is very short (likely incomplete)
+    if (versionEntry.content.trim().length < 20) {
+      validation.warnings.push(
+        `Changelog entry for ${expectedVersion} seems very short. ` +
+        `Make sure to document all changes.`
+      );
+    }
+
+  } catch (error: any) {
+    validation.valid = false;
+    validation.errors.push(`Error validating changelog: ${error.message}`);
+  }
+
+  return validation;
+}
+
+/**
+ * Extract version-specific changelog content and write to a temporary file
+ */
+export function extractVersionChangelog(
+  changelogPath: string,
+  version: string,
+  outputPath: string
+): void {
+  try {
+    const entries = parseChangelog(changelogPath);
+    const normalizedVersion = version.replace(/^v/, '');
+
+    const versionEntry = entries.find(e =>
+      e.version === normalizedVersion ||
+      e.version === `v${normalizedVersion}`
+    );
+
+    if (!versionEntry) {
+      throw new Error(`No changelog entry found for version ${version}`);
+    }
+
+    // Write the version content to the output file
+    const content = `## ${version}${versionEntry.date ? ` (${versionEntry.date})` : ''}\n\n${versionEntry.content}\n`;
+    Fs.writeFileSync(outputPath, content, 'utf-8');
+
+    core.info(`Created version-specific changelog at: ${outputPath}`);
+  } catch (error: any) {
+    throw new Error(`Failed to extract version changelog: ${error.message}`);
+  }
+}
+
+/**
+ * Represents a commit entry to be added to the changelog
+ */
+export interface CommitEntry {
+  message: string;
+  author: string;
+  prNumber?: number;
+}
+
+/**
+ * Format a commit entry for the changelog
+ * Format: "- {message} by {author} (#{prNumber})" or "- {message} by {author}"
+ */
+export function formatCommitEntry(entry: CommitEntry): string {
+  const prSuffix = entry.prNumber ? ` (#${entry.prNumber})` : '';
+  return `- ${entry.message} by ${entry.author}${prSuffix}`;
+}
+
+/**
+ * Check if an entry (by message) already exists in the changelog
+ */
+export function isEntryInChangelog(changelogPath: string, message: string): boolean {
+  try {
+    if (!Fs.existsSync(changelogPath)) {
+      return false;
+    }
+    const content = Fs.readFileSync(changelogPath, 'utf-8');
+    // Normalize whitespace for comparison
+    const normalizedMessage = message.trim().toLowerCase();
+    const normalizedContent = content.toLowerCase();
+    return normalizedContent.includes(normalizedMessage);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Read the raw changelog content, preserving the file structure
+ */
+function readChangelogContent(changelogPath: string): string {
+  if (!Fs.existsSync(changelogPath)) {
+    return '';
+  }
+  return Fs.readFileSync(changelogPath, 'utf-8');
+}
+
+/**
+ * Find the position and match of the unreleased header in the content
+ */
+function findUnreleasedSection(content: string, unreleasedHeader: string): {
+  headerStart: number;
+  headerEnd: number;
+  contentStart: number;
+  contentEnd: number;
+} | null {
+  // Find the unreleased header (case-insensitive)
+  const headerRegex = new RegExp(`^${escapeRegex(unreleasedHeader)}\\s*$`, 'mi');
+  const headerMatch = content.match(headerRegex);
+
+  if (!headerMatch || headerMatch.index === undefined) {
+    return null;
+  }
+
+  const headerStart = headerMatch.index;
+  const headerEnd = headerStart + headerMatch[0].length;
+
+  // Find where the content ends (next ## header or end of file)
+  const nextHeaderRegex = /^##\s+/m;
+  const afterHeader = content.slice(headerEnd);
+  const nextHeaderMatch = afterHeader.match(nextHeaderRegex);
+
+  const contentEnd = nextHeaderMatch && nextHeaderMatch.index !== undefined
+    ? headerEnd + nextHeaderMatch.index
+    : content.length;
+
+  return {
+    headerStart,
+    headerEnd,
+    contentStart: headerEnd,
+    contentEnd
+  };
+}
+
+/**
+ * Escape special regex characters in a string
+ */
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Add entries to the Unreleased section of the changelog
+ * Creates the section if it doesn't exist
+ */
+export function addToUnreleased(
+  changelogPath: string,
+  entries: CommitEntry[],
+  unreleasedHeader: string = '## Unreleased'
+): void {
+  if (entries.length === 0) {
+    return;
+  }
+
+  let content = readChangelogContent(changelogPath);
+  const formattedEntries = entries.map(formatCommitEntry).join('\n');
+
+  // Find existing unreleased section
+  const unreleasedSection = findUnreleasedSection(content, unreleasedHeader);
+
+  if (unreleasedSection) {
+    // Insert entries after the header
+    const beforeContent = content.slice(0, unreleasedSection.contentStart);
+    const existingContent = content.slice(unreleasedSection.contentStart, unreleasedSection.contentEnd);
+    const afterContent = content.slice(unreleasedSection.contentEnd);
+
+    // Add new entries after header, preserving existing content
+    const trimmedExisting = existingContent.trim();
+    const newSectionContent = trimmedExisting
+      ? `\n\n${formattedEntries}\n${trimmedExisting}\n`
+      : `\n\n${formattedEntries}\n`;
+
+    content = beforeContent + newSectionContent + afterContent;
+  } else {
+    // No unreleased section exists - create one
+    // Check if there's a title line (# Changelog or similar)
+    const titleMatch = content.match(/^#\s+[^\n]+\n/);
+
+    if (titleMatch) {
+      // Insert after the title
+      const afterTitle = titleMatch[0].length;
+      const newSection = `\n${unreleasedHeader}\n\n${formattedEntries}\n`;
+      content = content.slice(0, afterTitle) + newSection + content.slice(afterTitle);
+    } else if (content.trim() === '') {
+      // Empty file - create with title and unreleased section
+      content = `# Changelog\n\n${unreleasedHeader}\n\n${formattedEntries}\n`;
+    } else {
+      // No title, prepend unreleased section
+      content = `${unreleasedHeader}\n\n${formattedEntries}\n\n${content}`;
+    }
+  }
+
+  Fs.writeFileSync(changelogPath, content, 'utf-8');
+}
+
+/**
+ * Promote the Unreleased section to a versioned section
+ * Moves all content from Unreleased to a new version header and creates a fresh Unreleased section
+ */
+export function promoteUnreleasedToVersion(
+  changelogPath: string,
+  version: string,
+  date: string,
+  unreleasedHeader: string = '## Unreleased'
+): void {
+  let content = readChangelogContent(changelogPath);
+
+  if (!content.trim()) {
+    throw new Error('Changelog file is empty or does not exist');
+  }
+
+  const unreleasedSection = findUnreleasedSection(content, unreleasedHeader);
+
+  if (!unreleasedSection) {
+    throw new Error(`Unreleased section not found in changelog (looking for "${unreleasedHeader}")`);
+  }
+
+  // Extract the unreleased content
+  const unreleasedContent = content
+    .slice(unreleasedSection.contentStart, unreleasedSection.contentEnd)
+    .trim();
+
+  if (!unreleasedContent) {
+    throw new Error('Unreleased section is empty - nothing to promote');
+  }
+
+  // Build the new version section
+  const normalizedVersion = version.startsWith('v') ? version : `v${version}`;
+  const versionHeader = `## ${normalizedVersion} (${date})`;
+
+  // Build the new content:
+  // 1. Everything before unreleased header
+  // 2. Fresh unreleased section
+  // 3. New version section with the old unreleased content
+  // 4. Everything after the old unreleased content
+
+  const beforeUnreleased = content.slice(0, unreleasedSection.headerStart);
+  const afterUnreleased = content.slice(unreleasedSection.contentEnd);
+
+  const newContent = [
+    beforeUnreleased.trimEnd(),
+    '',
+    unreleasedHeader,
+    '',
+    versionHeader,
+    '',
+    unreleasedContent,
+    afterUnreleased.trimStart()
+  ].join('\n');
+
+  Fs.writeFileSync(changelogPath, newContent, 'utf-8');
+}
+
+/**
+ * Get the content of the Unreleased section
+ */
+export function getUnreleasedContent(
+  changelogPath: string,
+  unreleasedHeader: string = '## Unreleased'
+): string | null {
+  const content = readChangelogContent(changelogPath);
+
+  if (!content) {
+    return null;
+  }
+
+  const unreleasedSection = findUnreleasedSection(content, unreleasedHeader);
+
+  if (!unreleasedSection) {
+    return null;
+  }
+
+  return content.slice(unreleasedSection.contentStart, unreleasedSection.contentEnd).trim();
+}
+

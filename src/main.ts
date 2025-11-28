@@ -6,7 +6,7 @@ import { execSync } from 'child_process';
 import Fs from 'fs';
 import Path from 'path';
 import OS from 'os';
-import { validateChangelog, extractVersionChangelog } from './changelog';
+import { validateChangelog, extractVersionChangelog } from '../lib/changelog';
 
 interface ReleaseConfig {
   user: string;
@@ -661,3 +661,4 @@ main();
 
 export { ReleaseManager, ReleaseConfig, GitHubContext };
 export default main;
+

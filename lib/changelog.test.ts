@@ -1,6 +1,15 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert';
-import { parseChangelog, validateChangelog, extractVersionChangelog } from './changelog';
+import {
+  parseChangelog,
+  validateChangelog,
+  extractVersionChangelog,
+  formatCommitEntry,
+  isEntryInChangelog,
+  addToUnreleased,
+  promoteUnreleasedToVersion,
+  getUnreleasedContent
+} from './changelog';
 import Fs from 'fs';
 import Path from 'path';
 import OS from 'os';
@@ -286,6 +295,271 @@ describe('extractVersionChangelog', () => {
     );
 
     Fs.unlinkSync(testFile);
+  });
+});
+
+describe('formatCommitEntry', () => {
+  test('formats entry with PR number', () => {
+    const entry = { message: 'Add new feature', author: 'davesnx', prNumber: 123 };
+    const formatted = formatCommitEntry(entry);
+    assert.strictEqual(formatted, '- Add new feature by davesnx (#123)');
+  });
+
+  test('formats entry without PR number', () => {
+    const entry = { message: 'Fix bug', author: 'davesnx' };
+    const formatted = formatCommitEntry(entry);
+    assert.strictEqual(formatted, '- Fix bug by davesnx');
+  });
+});
+
+describe('isEntryInChangelog', () => {
+  test('returns true when entry exists', () => {
+    const testFile = Path.join(OS.tmpdir(), 'test-changelog-15.md');
+    const content = `## Unreleased
+
+- Add new feature by davesnx (#123)
+`;
+    Fs.writeFileSync(testFile, content);
+
+    assert.strictEqual(isEntryInChangelog(testFile, 'Add new feature'), true);
+
+    Fs.unlinkSync(testFile);
+  });
+
+  test('returns false when entry does not exist', () => {
+    const testFile = Path.join(OS.tmpdir(), 'test-changelog-16.md');
+    const content = `## Unreleased
+
+- Different feature by someone (#456)
+`;
+    Fs.writeFileSync(testFile, content);
+
+    assert.strictEqual(isEntryInChangelog(testFile, 'Add new feature'), false);
+
+    Fs.unlinkSync(testFile);
+  });
+
+  test('returns false when file does not exist', () => {
+    assert.strictEqual(isEntryInChangelog('/nonexistent/file.md', 'anything'), false);
+  });
+});
+
+describe('addToUnreleased', () => {
+  test('adds entries to existing unreleased section', () => {
+    const testFile = Path.join(OS.tmpdir(), 'test-changelog-17.md');
+    const content = `# Changelog
+
+## Unreleased
+
+- Existing entry
+
+## v1.0.0
+
+- Released feature
+`;
+    Fs.writeFileSync(testFile, content);
+
+    addToUnreleased(testFile, [
+      { message: 'New feature', author: 'davesnx', prNumber: 42 }
+    ]);
+
+    const result = Fs.readFileSync(testFile, 'utf-8');
+    assert.ok(result.includes('- New feature by davesnx (#42)'));
+    assert.ok(result.includes('- Existing entry'));
+    assert.ok(result.includes('## v1.0.0'));
+
+    Fs.unlinkSync(testFile);
+  });
+
+  test('creates unreleased section if not exists', () => {
+    const testFile = Path.join(OS.tmpdir(), 'test-changelog-18.md');
+    const content = `# Changelog
+
+## v1.0.0
+
+- Released feature
+`;
+    Fs.writeFileSync(testFile, content);
+
+    addToUnreleased(testFile, [
+      { message: 'New feature', author: 'davesnx' }
+    ]);
+
+    const result = Fs.readFileSync(testFile, 'utf-8');
+    assert.ok(result.includes('## Unreleased'));
+    assert.ok(result.includes('- New feature by davesnx'));
+
+    Fs.unlinkSync(testFile);
+  });
+
+  test('creates changelog file if not exists', () => {
+    const testFile = Path.join(OS.tmpdir(), 'test-changelog-19.md');
+
+    // Ensure file doesn't exist
+    if (Fs.existsSync(testFile)) {
+      Fs.unlinkSync(testFile);
+    }
+
+    addToUnreleased(testFile, [
+      { message: 'Initial feature', author: 'davesnx', prNumber: 1 }
+    ]);
+
+    assert.ok(Fs.existsSync(testFile));
+    const result = Fs.readFileSync(testFile, 'utf-8');
+    assert.ok(result.includes('# Changelog'));
+    assert.ok(result.includes('## Unreleased'));
+    assert.ok(result.includes('- Initial feature by davesnx (#1)'));
+
+    Fs.unlinkSync(testFile);
+  });
+
+  test('does nothing with empty entries array', () => {
+    const testFile = Path.join(OS.tmpdir(), 'test-changelog-20.md');
+    const content = `# Changelog
+
+## Unreleased
+`;
+    Fs.writeFileSync(testFile, content);
+
+    addToUnreleased(testFile, []);
+
+    const result = Fs.readFileSync(testFile, 'utf-8');
+    assert.strictEqual(result, content);
+
+    Fs.unlinkSync(testFile);
+  });
+});
+
+describe('promoteUnreleasedToVersion', () => {
+  test('promotes unreleased content to version section', () => {
+    const testFile = Path.join(OS.tmpdir(), 'test-changelog-21.md');
+    const content = `# Changelog
+
+## Unreleased
+
+- New feature by davesnx (#42)
+- Bug fix by someone (#43)
+
+## v1.0.0
+
+- Old feature
+`;
+    Fs.writeFileSync(testFile, content);
+
+    promoteUnreleasedToVersion(testFile, 'v1.1.0', '2025-01-15');
+
+    const result = Fs.readFileSync(testFile, 'utf-8');
+
+    // Should have fresh unreleased section
+    assert.ok(result.includes('## Unreleased'));
+
+    // Should have new version section with old unreleased content
+    assert.ok(result.includes('## v1.1.0 (2025-01-15)'));
+    assert.ok(result.includes('- New feature by davesnx (#42)'));
+    assert.ok(result.includes('- Bug fix by someone (#43)'));
+
+    // Old version should still be there
+    assert.ok(result.includes('## v1.0.0'));
+
+    Fs.unlinkSync(testFile);
+  });
+
+  test('adds v prefix if missing', () => {
+    const testFile = Path.join(OS.tmpdir(), 'test-changelog-22.md');
+    const content = `## Unreleased
+
+- Feature
+`;
+    Fs.writeFileSync(testFile, content);
+
+    promoteUnreleasedToVersion(testFile, '2.0.0', '2025-01-15');
+
+    const result = Fs.readFileSync(testFile, 'utf-8');
+    assert.ok(result.includes('## v2.0.0 (2025-01-15)'));
+
+    Fs.unlinkSync(testFile);
+  });
+
+  test('throws error when unreleased section is empty', () => {
+    const testFile = Path.join(OS.tmpdir(), 'test-changelog-23.md');
+    const content = `# Changelog
+
+## Unreleased
+
+## v1.0.0
+
+- Old feature
+`;
+    Fs.writeFileSync(testFile, content);
+
+    assert.throws(
+      () => promoteUnreleasedToVersion(testFile, 'v1.1.0', '2025-01-15'),
+      /empty/i
+    );
+
+    Fs.unlinkSync(testFile);
+  });
+
+  test('throws error when unreleased section not found', () => {
+    const testFile = Path.join(OS.tmpdir(), 'test-changelog-24.md');
+    const content = `# Changelog
+
+## v1.0.0
+
+- Old feature
+`;
+    Fs.writeFileSync(testFile, content);
+
+    assert.throws(
+      () => promoteUnreleasedToVersion(testFile, 'v1.1.0', '2025-01-15'),
+      /not found/i
+    );
+
+    Fs.unlinkSync(testFile);
+  });
+});
+
+describe('getUnreleasedContent', () => {
+  test('returns unreleased content', () => {
+    const testFile = Path.join(OS.tmpdir(), 'test-changelog-25.md');
+    const content = `# Changelog
+
+## Unreleased
+
+- Feature A
+- Feature B
+
+## v1.0.0
+
+- Old feature
+`;
+    Fs.writeFileSync(testFile, content);
+
+    const unreleased = getUnreleasedContent(testFile);
+    assert.ok(unreleased?.includes('Feature A'));
+    assert.ok(unreleased?.includes('Feature B'));
+    assert.ok(!unreleased?.includes('Old feature'));
+
+    Fs.unlinkSync(testFile);
+  });
+
+  test('returns null when no unreleased section', () => {
+    const testFile = Path.join(OS.tmpdir(), 'test-changelog-26.md');
+    const content = `## v1.0.0
+
+- Old feature
+`;
+    Fs.writeFileSync(testFile, content);
+
+    const unreleased = getUnreleasedContent(testFile);
+    assert.strictEqual(unreleased, null);
+
+    Fs.unlinkSync(testFile);
+  });
+
+  test('returns null when file does not exist', () => {
+    const unreleased = getUnreleasedContent('/nonexistent/file.md');
+    assert.strictEqual(unreleased, null);
   });
 });
 
