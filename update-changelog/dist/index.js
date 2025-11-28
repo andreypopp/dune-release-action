@@ -30424,7 +30424,7 @@ function addVersionSection(changelogPath, version, date, entries, unreleasedHead
 
 /***/ }),
 
-/***/ 1730:
+/***/ 7869:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -30462,582 +30462,411 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.ReleaseManager = void 0;
+exports.getLatestTag = getLatestTag;
+exports.getAllTags = getAllTags;
+exports.getCommitsSince = getCommitsSince;
+exports.getCommitsBetween = getCommitsBetween;
+exports.filterCommits = filterCommits;
+exports.toCommitEntry = toCommitEntry;
+exports.isTagPush = isTagPush;
+exports.getTagName = getTagName;
+exports.backfillChangelog = backfillChangelog;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
 const child_process_1 = __nccwpck_require__(5317);
-const fs_1 = __importDefault(__nccwpck_require__(9896));
-const path_1 = __importDefault(__nccwpck_require__(6928));
-const os_1 = __importDefault(__nccwpck_require__(857));
 const changelog_1 = __nccwpck_require__(7900);
-class ReleaseManager {
-    context;
-    verbose;
-    constructor(context, verbose = false) {
-        this.context = context;
-        this.verbose = verbose;
-    }
-    /**
-     * Conditional info logging - only logs if verbose mode is enabled
-     */
-    info(message) {
-        if (this.verbose) {
-            core.info(message);
-        }
-    }
-    /**
-     * Execute a command and return its output
-     */
-    exec(command, options = {}) {
-        if (!options.silent) {
-            this.info(`> ${command}`);
-        }
-        try {
-            const result = (0, child_process_1.execSync)(command, {
-                encoding: 'utf-8',
-                // Use 'ignore' for stdin to avoid TTY errors in CI, inherit stdout/stderr for visibility
-                stdio: options.silent ? 'pipe' : ['ignore', 'inherit', 'inherit']
-            });
-            // When stdio is 'inherit', execSync returns null
-            // When stdio is 'pipe', it returns the output
-            if (result === null || result === undefined) {
-                return '';
-            }
-            return result.toString().trim();
-        }
-        catch (error) {
-            const message = `Command failed: ${command}\n${error.message}`;
-            core.error(message);
-            throw new Error(message);
-        }
-    }
-    /**
-     * Validate that the tag is new and doesn't exist on remote
-     */
-    validateNewTag() {
-        core.startGroup('Validating tag');
-        try {
-            const tagName = this.context.ref.replace('refs/tags/', '');
-            this.info(`Checking if tag ${tagName} already exists on remote...`);
-            const remoteTags = this.exec('git ls-remote --tags origin', { silent: true });
-            const tagExists = remoteTags.includes(`refs/tags/${tagName}`);
-            if (tagExists) {
-                core.warning(`Tag ${tagName} already exists on remote repository`);
-            }
-            else {
-                this.info(`Tag ${tagName} is new, proceeding with release`);
-            }
-        }
-        catch (error) {
-            core.warning(`Could not validate tag existence: ${error.message}`);
-            this.info('Proceeding anyway (validation check failed)');
-        }
-        core.endGroup();
-    }
-    /**
-     * Check if required tools are installed
-     */
-    checkDependencies() {
-        core.startGroup('Checking dependencies');
-        const dependencies = [
-            { name: 'opam', command: 'opam --version' },
-            { name: 'dune-release', command: 'opam exec -- dune-release --version' }
-        ];
-        const missing = [];
-        for (const dep of dependencies) {
-            try {
-                const version = this.exec(dep.command, { silent: true });
-                this.info(`✓ ${dep.name} is installed: ${version}`);
-            }
-            catch (error) {
-                core.error(`✗ ${dep.name} is not installed or not accessible`);
-                missing.push(dep.name);
-            }
-        }
-        core.endGroup();
-        if (missing.length > 0) {
-            const errorMessage = `Missing required dependencies: ${missing.join(', ')}`;
-            core.error(errorMessage);
-            core.error('');
-            core.error('To fix this:');
-            if (missing.includes('opam')) {
-                core.error('Install opam: https://opam.ocaml.org/doc/Install.html');
-            }
-            if (missing.includes('dune-release')) {
-                core.error('Install dune-release: opam install dune-release');
-            }
-            throw new Error(errorMessage);
-        }
-    }
-    /**
-     * Extract version from git tag
-     */
-    extractVersion() {
-        try {
-            const tag = this.context.ref.replace('refs/tags/', '');
-            if (!tag || tag === this.context.ref) {
-                throw new Error('No valid git tag found in ref');
-            }
-            core.setOutput('version', tag);
-            this.info(`Extracted version: ${tag}`);
-            return tag;
-        }
-        catch (error) {
-            core.error(`Failed to extract version from ref ${this.context.ref}: ${error.message}`);
-            throw new Error(`Could not extract version: ${error.message}`);
-        }
-    }
-    /**
-     * Configure Git for release operations
-     */
-    configureGit() {
-        core.startGroup('Configuring Git for release');
-        try {
-            this.exec('git config --global user.name "GitHub Actions"');
-            this.exec('git config --global user.email "actions@github.com"');
-            // Configure git to use token for both HTTPS and SSH URLs
-            const gitConfig = `https://x-access-token:${this.context.token}@github.com/`;
-            this.exec(`git config --global url."${gitConfig}".insteadOf "https://github.com/"`);
-            this.exec(`git config --global url."${gitConfig}".insteadOf "git@github.com:"`);
-            this.info('Git configuration completed');
-        }
-        catch (error) {
-            core.error(`Failed to configure git: ${error.message}`);
-            throw new Error(`Could not configure git: ${error.message}`);
-        }
-        core.endGroup();
-    }
-    /**
-     * Setup dune-release configuration
-     */
-    setupDuneReleaseConfig(config) {
-        core.startGroup('Setting up dune-release configuration');
-        try {
-            const configDir = path_1.default.join(os_1.default.homedir(), '.config', 'dune');
-            fs_1.default.mkdirSync(configDir, { recursive: true });
-            const configContent = `user: ${config.user}
-remote: ${config.remote}
-local: ${config.local}
-`;
-            fs_1.default.writeFileSync(path_1.default.join(configDir, 'release.yml'), configContent);
-            // Create GitHub token file with secure permissions
-            const tokenPath = path_1.default.join(configDir, 'github.token');
-            fs_1.default.writeFileSync(tokenPath, this.context.token, { mode: 0o600 });
-            this.info(`GitHub token file created at ${tokenPath}`);
-            this.info('dune-release configuration created');
-        }
-        catch (error) {
-            core.error(`Failed to setup dune-release configuration: ${error.message}`);
-            throw new Error(`Could not setup dune-release configuration: ${error.message}`);
-        }
-        core.endGroup();
-    }
-    /**
-     * Check if a GitHub repository exists and is accessible
-     */
-    async checkRepositoryExists(owner, repo) {
-        try {
-            const octokit = github.getOctokit(this.context.token);
-            await octokit.rest.repos.get({
-                owner,
-                repo
-            });
-            return true;
-        }
-        catch (error) {
-            if (error.status === 404) {
-                return false;
-            }
-            // For other errors (like auth issues), we'll let them surface later
-            core.warning(`Could not check repository ${owner}/${repo}: ${error.message}`);
-            return false;
-        }
-    }
-    /**
-     * Clone opam-repository fork and sync with upstream
-     */
-    async cloneOpamRepository(forkUrl, localPath, forkOwner) {
-        core.startGroup('Cloning opam-repository fork');
-        // Check if the fork exists
-        const forkExists = await this.checkRepositoryExists(forkOwner, 'opam-repository');
-        if (!forkExists) {
-            core.error(`Fork ${forkOwner}/opam-repository does not exist or is not accessible.`);
-            core.error('');
-            core.error('To fix this:');
-            core.error(`1. Create a fork of ocaml/opam-repository at: https://github.com/ocaml/opam-repository/fork`);
-            core.error(`2. Make sure your GH_TOKEN has access to the fork`);
-            core.error('3. Verify your token has the "repo" scope enabled');
-            throw new Error(`Repository ${forkOwner}/opam-repository not found or not accessible`);
-        }
-        this.info(`Fork ${forkOwner}/opam-repository exists and is accessible`);
-        // Create directory structure
-        const gitDir = path_1.default.dirname(localPath);
-        try {
-            fs_1.default.mkdirSync(gitDir, { recursive: true });
-            this.info(`Created directory: ${gitDir}`);
-        }
-        catch (error) {
-            core.warning(`Could not create directory ${gitDir}: ${error.message}`);
-            // Try to proceed anyway, git clone might handle it
-        }
-        // Clone fork with shallow depth for faster cloning
-        try {
-            this.exec(`git clone --depth 1 ${forkUrl} ${localPath}`);
-        }
-        catch (error) {
-            core.error(`Failed to clone ${forkUrl}`);
-            core.error('');
-            core.error('Possible causes:');
-            core.error('1. Your GH_TOKEN might not have the "repo" scope');
-            core.error('2. The token might not have access to the fork');
-            core.error('3. The fork might be private (it should be public)');
-            throw error;
-        }
-        // Set up upstream and sync
-        const originalDir = process.cwd();
-        try {
-            try {
-                process.chdir(localPath);
-            }
-            catch (error) {
-                core.error(`Failed to change to cloned repository directory: ${error.message}`);
-                throw new Error(`Could not change to directory ${localPath}: ${error.message}`);
-            }
-            // Add upstream remote
-            try {
-                this.exec('git remote add upstream https://github.com/ocaml/opam-repository.git');
-            }
-            catch {
-                this.info('Upstream remote already exists');
-            }
-            // Fetch and merge latest from upstream (shallow fetch)
-            this.exec('git fetch --depth 1 upstream master');
-            this.exec('git checkout master');
-            try {
-                this.exec('git merge upstream/master --ff-only');
-                this.info('Fork synced with upstream');
-            }
-            catch {
-                core.warning('Your fork may be out of sync with upstream');
-            }
-        }
-        finally {
-            process.chdir(originalDir);
-        }
-        core.endGroup();
-    }
-    /**
-     * Run dune-release commands
-     */
-    runDuneRelease(command, args = []) {
-        const fullCommand = `opam exec -- dune-release ${command} ${args.join(' ')}`;
-        this.exec(fullCommand);
-    }
-    /**
-     * Delete tag on failure
-     */
-    deleteTag() {
-        const tagName = this.context.ref.replace('refs/tags/', '');
-        this.info(`Attempting to delete tag ${tagName}`);
-        // Configure git with token for both HTTPS and SSH URLs
-        const gitConfig = `https://x-access-token:${this.context.token}@github.com/`;
-        this.exec(`git config --global url."${gitConfig}".insteadOf "https://github.com/"`, { silent: true });
-        this.exec(`git config --global url."${gitConfig}".insteadOf "git@github.com:"`, { silent: true });
-        // Check if remote tag exists before deleting
-        try {
-            const remoteTags = this.exec('git ls-remote --tags origin', { silent: true });
-            const remoteTagExists = remoteTags.includes(`refs/tags/${tagName}`);
-            if (remoteTagExists) {
-                this.exec(`git push origin --delete ${tagName}`);
-                this.info(`Remote tag ${tagName} deleted`);
-            }
-            else {
-                this.info(`Remote tag ${tagName} does not exist, skipping deletion`);
-            }
-        }
-        catch (error) {
-            core.warning(`Could not delete remote tag ${tagName}: ${error.message}`);
-        }
-        // Check if local tag exists before deleting
-        try {
-            const localTags = this.exec('git tag -l', { silent: true });
-            const localTagExists = localTags.split('\n').includes(tagName);
-            if (localTagExists) {
-                this.exec(`git tag -d ${tagName}`, { silent: true });
-                this.info(`Local tag ${tagName} deleted`);
-            }
-            else {
-                this.info(`Local tag ${tagName} does not exist, skipping deletion`);
-            }
-        }
-        catch (error) {
-            core.warning(`Could not delete local tag ${tagName}: ${error.message}`);
-        }
-        core.error(`Release failed - tag cleanup completed. Please fix the issues and create a new tag.`);
-        process.exit(1);
-    }
-    /**
-     * Run the full release pipeline
-     */
-    async runRelease(packages, changelogPath, duneConfig, toGithubReleases, toOpamRepository) {
-        let versionChangelogPath = null;
-        try {
-            // Check dependencies first
-            this.checkDependencies();
-            // Validate the tag is new
-            this.validateNewTag();
-            // Setup
-            this.configureGit();
-            const version = this.extractVersion();
-            // Log what will be published
-            if (!toGithubReleases && !toOpamRepository) {
-                core.warning('Both GitHub releases and opam submission are disabled - running validation only');
-            }
-            else {
-                if (!toGithubReleases) {
-                    core.warning('GitHub releases disabled - will not publish to GitHub');
-                }
-                if (!toOpamRepository) {
-                    core.warning('opam submission disabled - will not submit to opam-repository');
-                }
-            }
-            this.info(`Starting release for version ${version}`);
-            // Validate and extract changelog
-            core.startGroup('Validating changelog');
-            const validation = (0, changelog_1.validateChangelog)(changelogPath, version);
-            // Display warnings
-            if (validation.warnings.length > 0) {
-                validation.warnings.forEach(warning => core.warning(warning));
-            }
-            // Display errors and fail if invalid
-            if (!validation.valid) {
-                validation.errors.forEach(error => core.error(error));
-                throw new Error('Changelog validation failed. Please fix the issues and try again.');
-            }
-            // Extract version-specific changelog to temporary file
-            const changelogFilename = path_1.default.basename(changelogPath, path_1.default.extname(changelogPath));
-            const absoluteChangelogPath = path_1.default.resolve(changelogPath);
-            versionChangelogPath = path_1.default.join(path_1.default.dirname(absoluteChangelogPath), `${changelogFilename}-${version}${path_1.default.extname(changelogPath)}`);
-            (0, changelog_1.extractVersionChangelog)(absoluteChangelogPath, version, versionChangelogPath);
-            // Log the extracted content for verification
-            try {
-                const extractedContent = fs_1.default.readFileSync(versionChangelogPath, 'utf-8');
-                core.info(`Created version-specific changelog at: ${versionChangelogPath}`);
-                core.info(`Changelog content (${extractedContent.length} chars):`);
-                this.info(extractedContent.substring(0, 200) + (extractedContent.length > 200 ? '...' : ''));
-            }
-            catch (error) {
-                core.warning(`Could not read version-specific changelog: ${error.message}`);
-            }
-            // Update changelogPath to use the version-specific file (absolute path)
-            changelogPath = versionChangelogPath;
-            core.endGroup();
-            // Lint opam files
-            core.startGroup('Linting opam files');
-            this.runDuneRelease('lint', ['-p', packages]);
-            core.endGroup();
-            // Setup dune-release config
-            this.setupDuneReleaseConfig(duneConfig);
-            // Clone opam repository (even in dry-run to validate the setup)
-            await this.cloneOpamRepository(duneConfig.remote, duneConfig.local, duneConfig.user);
-            // Distribute release archive
-            core.startGroup('Distributing release archive');
-            this.runDuneRelease('distrib', ['-p', packages, '--skip-tests', '--skip-lint']);
-            core.endGroup();
-            // Publish to GitHub (conditional)
-            if (toGithubReleases) {
-                core.startGroup('Publishing to GitHub');
-                process.env.DUNE_RELEASE_DELEGATE = 'github-dune-release';
-                process.env.GITHUB_TOKEN = this.context.token;
-                this.info(`Publishing with changelog: ${changelogPath}`);
-                this.runDuneRelease('publish', ['--yes', `--change-log=${changelogPath}`]);
-                core.endGroup();
-            }
-            else {
-                core.startGroup('Publishing to GitHub (skipped)');
-                core.warning('Skipping GitHub release publication');
-                core.endGroup();
-            }
-            // Package opam release (always needed for validation)
-            core.startGroup(`Packaging opam release for ${packages}`);
-            this.runDuneRelease('opam', ['pkg', '-p', packages, '--yes', `--change-log=${changelogPath}`]);
-            core.endGroup();
-            // Submit to opam repository (conditional)
-            if (toOpamRepository) {
-                core.startGroup('Submitting to opam repository');
-                process.env.DUNE_RELEASE_DELEGATE = 'github-dune-release';
-                process.env.GITHUB_TOKEN = this.context.token;
-                // Ensure we're in the project directory
-                try {
-                    process.chdir(this.context.workspace);
-                }
-                catch (error) {
-                    core.error(`Failed to change to workspace directory: ${error.message}`);
-                    throw new Error(`Could not change to workspace directory ${this.context.workspace}: ${error.message}`);
-                }
-                this.runDuneRelease('opam', ['submit', '-p', packages, '--yes', `--change-log=${changelogPath}`]);
-                core.endGroup();
-            }
-            else {
-                core.startGroup('Submitting to opam repository (skipped)');
-                core.warning('Skipping submission to opam-repository');
-                core.endGroup();
-            }
-            // Success notification
-            const tagName = this.context.ref.replace('refs/tags/', '');
-            core.notice(`Release ${tagName} completed successfully!`);
-            if (toGithubReleases) {
-                core.notice(`GitHub release: https://github.com/${this.context.repository}/releases/tag/${tagName}`);
-            }
-            if (toOpamRepository) {
-                // Construct the expected opam PR URL
-                // For multi-package releases, join package names with hyphens
-                const opamBranch = `release-${packages.replace(/,/g, '-')}-${version}`;
-                const effectiveUser = duneConfig.user;
-                const opamPrUrl = `https://github.com/ocaml/opam-repository/compare/master...${effectiveUser}:opam-repository:${opamBranch}`;
-                core.notice(`Opam PR: ${opamPrUrl}`);
-                // Create a commit with the release information
-                try {
-                    core.startGroup('Creating release tracking commit');
-                    let commitMessage = `release ${version}\n\n`;
-                    if (toOpamRepository) {
-                        commitMessage += `opam pr: ${opamPrUrl}\n`;
-                    }
-                    if (toGithubReleases) {
-                        commitMessage += `github release: https://github.com/${this.context.repository}/releases/tag/${tagName}\n`;
-                    }
-                    // Check if we're on a branch (not detached HEAD)
-                    const currentBranch = this.exec('git rev-parse --abbrev-ref HEAD', { silent: true });
-                    if (currentBranch === 'HEAD') {
-                        this.info('Running on detached HEAD (tag), skipping commit creation');
-                    }
-                    else {
-                        // Allow empty commit in case there are no changes
-                        this.exec(`git commit --allow-empty -m "${commitMessage.trim()}"`);
-                        this.info('Created commit with release information');
-                        // Push the commit to the repository
-                        this.exec(`git push origin ${currentBranch}`);
-                        this.info(`Pushed release tracking commit to ${currentBranch}`);
-                    }
-                    core.endGroup();
-                }
-                catch (error) {
-                    core.warning(`Could not create or push release tracking commit: ${error.message}`);
-                    // Non-fatal, continue
-                }
-            }
-        }
-        catch (error) {
-            const errorMessage = error.message || error.toString();
-            // Check for specific error patterns and provide helpful messages
-            if (errorMessage.includes('without `workflow` scope')) {
-                core.error('GitHub token is missing the "workflow" scope');
-            }
-            else if (errorMessage.includes('Permission to') && errorMessage.includes('denied')) {
-                core.error('GitHub token does not have permission to push to the repository');
-                core.error('Make sure your token has the "repo" scope and you have push access');
-            }
-            else if (errorMessage.includes('authentication failed') || errorMessage.includes('Invalid username or token')) {
-                core.error('GitHub token authentication failed');
-                core.error('Please check that your GH_TOKEN secret is valid and not expired');
-            }
-            core.error(`Release failed: ${errorMessage}`);
-            // Only delete tag if we were publishing to GitHub (real release scenario)
-            if (toGithubReleases || toOpamRepository) {
-                this.deleteTag();
-            }
-            else {
-                core.warning('Validation mode: Skipping tag deletion on failure');
-            }
-            throw error;
-        }
-        finally {
-            // Clean up temporary changelog file
-            if (versionChangelogPath && fs_1.default.existsSync(versionChangelogPath)) {
-                try {
-                    fs_1.default.unlinkSync(versionChangelogPath);
-                    this.info(`Cleaned up temporary changelog: ${versionChangelogPath}`);
-                }
-                catch (error) {
-                    core.warning(`Could not clean up temporary changelog: ${error.message}`);
-                }
-            }
-        }
-    }
-}
-exports.ReleaseManager = ReleaseManager;
-async function main() {
+/**
+ * Execute a shell command and return the output
+ */
+function exec(command, options = {}) {
     try {
-        const packagesInput = core.getInput('packages', { required: true });
-        // Parse packages input - GitHub Actions passes arrays as newline-separated strings
-        const packagesArray = packagesInput
-            .split('\n')
-            .map(pkg => pkg.trim())
-            .filter(pkg => pkg.length > 0);
-        // Join packages with commas for -p flag
-        const packages = packagesArray.join(',');
-        const changelogPath = core.getInput('changelog') || './CHANGES.md';
-        const token = core.getInput('github-token', { required: true });
-        const toOpamRepository = core.getInput('to-opam-repository') !== 'false';
-        const toGithubReleases = core.getInput('to-github-releases') !== 'false';
-        const verbose = core.getInput('verbose') === 'true';
-        // Validate that we're running on a tag
-        // Use TEST_OVERRIDE_GITHUB_REF if provided (for testing), otherwise use GITHUB_REF
-        const testRefOverride = process.env.TEST_OVERRIDE_GITHUB_REF || '';
-        const ref = testRefOverride || process.env.GITHUB_REF || github.context.ref;
-        if (!ref.startsWith('refs/tags/')) {
-            throw new Error(`This action must be run on a git tag. Current ref: ${ref}`);
-        }
-        if (testRefOverride && verbose) {
-            core.warning(`Using TEST_OVERRIDE_GITHUB_REF: ${testRefOverride}`);
-        }
-        // Get the user's GitHub username for the opam-repository fork
-        const effectiveUser = process.env.GITHUB_ACTOR || 'github-actions';
-        const opamRepoFork = `${effectiveUser}/opam-repository`;
-        // Use a local path that works both on GitHub Actions and locally
-        const defaultOpamPath = process.env.RUNNER_TEMP ? '/home/runner/git/opam-repository' : '/tmp/opam-repository-test';
-        const opamRepoLocal = core.getInput('opam-repo-local') || defaultOpamPath;
-        // Get context from environment and GitHub context
-        const context = {
-            ref: ref, // Use the ref we already validated (includes test override)
-            repository: process.env.GITHUB_REPOSITORY || `${github.context.repo.owner}/${github.context.repo.repo}`,
-            workspace: process.env.GITHUB_WORKSPACE || process.cwd(),
-            token: token
-        };
-        // Build dune-release config
-        const duneConfig = {
-            user: effectiveUser,
-            remote: `git@github.com:${opamRepoFork}`,
-            local: opamRepoLocal
-        };
-        // Log configuration (only if verbose)
-        if (verbose) {
-            core.info('=== OCaml Dune Release Action ===');
-            core.info(`Packages: ${packages}`);
-            core.info(`Changelog: ${changelogPath}`);
-            core.info(`User: ${effectiveUser}`);
-            core.info(`Opam fork: ${opamRepoFork}`);
-            core.info(`Publish to GitHub: ${toGithubReleases ? 'Yes' : 'No'}`);
-            core.info(`Submit to opam: ${toOpamRepository ? 'Yes' : 'No'}`);
-            core.info('================================');
-        }
-        // Run the release
-        const releaseManager = new ReleaseManager(context, verbose);
-        await releaseManager.runRelease(packages, changelogPath, duneConfig, toGithubReleases, toOpamRepository);
-        core.setOutput('release-status', 'success');
+        const result = (0, child_process_1.execSync)(command, {
+            encoding: 'utf-8',
+            stdio: options.silent ? 'pipe' : ['pipe', 'pipe', 'pipe']
+        });
+        return result.toString().trim();
     }
     catch (error) {
-        core.setFailed(error.message);
-        core.setOutput('release-status', 'failed');
+        if (options.silent) {
+            return '';
+        }
+        throw error;
+    }
+}
+/**
+ * Get the most recent tag from git
+ */
+function getLatestTag() {
+    try {
+        const tag = exec('git describe --tags --abbrev=0', { silent: true });
+        return tag || null;
+    }
+    catch {
+        // No tags exist yet
+        return null;
+    }
+}
+/**
+ * Get all tags sorted by version (oldest first)
+ */
+function getAllTags() {
+    try {
+        const output = exec('git tag --sort=version:refname', { silent: true });
+        if (!output) {
+            return [];
+        }
+        return output.split('\n').filter(tag => tag.trim());
+    }
+    catch {
+        return [];
+    }
+}
+/**
+ * Get the date of a tag in YYYY-MM-DD format
+ */
+function getTagDate(tag) {
+    try {
+        // Get the commit date of the tag
+        const date = exec(`git log -1 --format=%ci ${tag}`, { silent: true });
+        if (date) {
+            // Extract YYYY-MM-DD from the date string
+            return date.split(' ')[0];
+        }
+    }
+    catch {
+        // Fall through to default
+    }
+    return getCurrentDate();
+}
+/**
+ * Get commits between two refs (exclusive of fromRef, inclusive of toRef)
+ */
+function getCommitsBetween(fromRef, toRef) {
+    const format = '%H|%s|%an';
+    const range = fromRef ? `${fromRef}..${toRef}` : toRef;
+    try {
+        const output = exec(`git log ${range} --format="${format}"`, { silent: true });
+        if (!output) {
+            return [];
+        }
+        return output.split('\n').filter(line => line.trim()).map(line => {
+            const [sha, message, author] = line.split('|');
+            return {
+                sha: sha.trim(),
+                message: message.trim(),
+                author: author.trim()
+            };
+        });
+    }
+    catch {
+        return [];
+    }
+}
+/**
+ * Get commits since a given ref (tag or commit)
+ * If no ref is provided, gets all commits
+ */
+function getCommitsSince(ref) {
+    const format = '%H|%s|%an';
+    const range = ref ? `${ref}..HEAD` : 'HEAD';
+    try {
+        const output = exec(`git log ${range} --format="${format}"`, { silent: true });
+        if (!output) {
+            return [];
+        }
+        return output.split('\n').filter(line => line.trim()).map(line => {
+            const [sha, message, author] = line.split('|');
+            return {
+                sha: sha.trim(),
+                message: message.trim(),
+                author: author.trim()
+            };
+        });
+    }
+    catch {
+        return [];
+    }
+}
+/**
+ * Try to find the PR number and author handle associated with a commit
+ */
+async function enrichCommitWithPR(octokit, owner, repo, commit) {
+    let enriched = { ...commit };
+    try {
+        // Check if the commit message already has a PR reference like "(#123)"
+        const prMatch = commit.message.match(/\(#(\d+)\)$/);
+        if (prMatch) {
+            enriched.prNumber = parseInt(prMatch[1], 10);
+        }
+        // Try to find associated PRs via GitHub API
+        if (!enriched.prNumber) {
+            const { data: prs } = await octokit.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner,
+                repo,
+                commit_sha: commit.sha
+            });
+            if (prs.length > 0) {
+                // Use the first (most likely the merged) PR
+                enriched.prNumber = prs[0].number;
+                // Get author handle from PR
+                if (prs[0].user?.login) {
+                    enriched.authorHandle = prs[0].user.login;
+                }
+            }
+        }
+        // If we still don't have the author handle, try to get it from the commit
+        if (!enriched.authorHandle) {
+            try {
+                const { data: commitData } = await octokit.rest.repos.getCommit({
+                    owner,
+                    repo,
+                    ref: commit.sha
+                });
+                if (commitData.author?.login) {
+                    enriched.authorHandle = commitData.author.login;
+                }
+            }
+            catch {
+                // Ignore - we'll fall back to git author name
+            }
+        }
+    }
+    catch (error) {
+        core.debug(`Could not enrich commit ${commit.sha}: ${error.message}`);
+    }
+    return enriched;
+}
+/**
+ * Filter commits to exclude merge commits and already-added entries
+ */
+function filterCommits(commits, changelogPath) {
+    return commits.filter(commit => {
+        // Skip merge commits
+        if (commit.message.startsWith('Merge ')) {
+            core.debug(`Skipping merge commit: ${commit.message}`);
+            return false;
+        }
+        // Skip if already in changelog
+        if ((0, changelog_1.isEntryInChangelog)(changelogPath, commit.message)) {
+            core.debug(`Skipping already-tracked commit: ${commit.message}`);
+            return false;
+        }
+        return true;
+    });
+}
+/**
+ * Convert CommitInfo to CommitEntry for the changelog
+ */
+function toCommitEntry(commit, repoUrl) {
+    // Clean up the message - remove PR reference if present (we'll add it back formatted)
+    const cleanMessage = commit.message.replace(/\s*\(#\d+\)$/, '').trim();
+    return {
+        message: cleanMessage,
+        author: commit.authorHandle || commit.author, // Prefer GitHub handle
+        prNumber: commit.prNumber,
+        commitSha: commit.sha, // Include SHA for commit link fallback
+        repoUrl
+    };
+}
+/**
+ * Get the current date in YYYY-MM-DD format
+ */
+function getCurrentDate() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+/**
+ * Check if the current event is a tag push
+ */
+function isTagPush() {
+    const ref = process.env.GITHUB_REF || '';
+    return ref.startsWith('refs/tags/');
+}
+/**
+ * Extract tag name from GITHUB_REF
+ */
+function getTagName() {
+    const ref = process.env.GITHUB_REF || '';
+    if (!ref.startsWith('refs/tags/')) {
+        return null;
+    }
+    return ref.replace('refs/tags/', '');
+}
+/**
+ * Configure git for committing
+ */
+function configureGit(token) {
+    exec('git config --local user.name "github-actions[bot]"');
+    exec('git config --local user.email "github-actions[bot]@users.noreply.github.com"');
+    // Set up authentication
+    const origin = exec('git remote get-url origin', { silent: true });
+    if (origin.startsWith('https://')) {
+        const authedUrl = origin.replace('https://', `https://x-access-token:${token}@`);
+        exec(`git remote set-url origin ${authedUrl}`, { silent: true });
+    }
+}
+/**
+ * Commit and push changes
+ */
+function commitAndPush(changelogPath, message) {
+    exec(`git add ${changelogPath}`);
+    // Check if there are changes to commit
+    const status = exec('git status --porcelain', { silent: true });
+    if (!status) {
+        core.info('No changes to commit');
+        return;
+    }
+    exec(`git commit -m "${message}"`);
+    // Push to the current branch
+    const branch = exec('git rev-parse --abbrev-ref HEAD', { silent: true });
+    exec(`git push origin ${branch}`);
+    core.info(`Committed and pushed changes to ${branch}`);
+}
+/**
+ * Backfill changelog with entries for tags that don't have version sections
+ */
+async function backfillChangelog(octokit, owner, repo, changelogPath, unreleasedHeader) {
+    const repoUrl = `https://github.com/${owner}/${repo}`;
+    const allTags = getAllTags();
+    if (allTags.length === 0) {
+        core.info('No tags found - nothing to backfill');
+        return 0;
+    }
+    core.info(`Found ${allTags.length} tags: ${allTags.join(', ')}`);
+    // Find tags without changelog entries
+    const missingTags = allTags.filter(tag => !(0, changelog_1.hasVersion)(changelogPath, tag));
+    if (missingTags.length === 0) {
+        core.info('All tags have changelog entries - no backfill needed');
+        return 0;
+    }
+    core.info(`Backfilling ${missingTags.length} missing tags: ${missingTags.join(', ')}`);
+    // Process tags in order (oldest first) so they appear correctly in changelog
+    for (let i = 0; i < missingTags.length; i++) {
+        const tag = missingTags[i];
+        const tagIndex = allTags.indexOf(tag);
+        const previousTag = tagIndex > 0 ? allTags[tagIndex - 1] : null;
+        core.info(`\nProcessing ${tag} (previous: ${previousTag || 'none'})`);
+        // Get commits for this tag
+        const commits = getCommitsBetween(previousTag, tag);
+        core.info(`  Found ${commits.length} commits`);
+        // Filter merge commits
+        const filteredCommits = commits.filter(c => !c.message.startsWith('Merge '));
+        // Enrich with PR numbers and author handles
+        const enrichedCommits = await Promise.all(filteredCommits.map(commit => enrichCommitWithPR(octokit, owner, repo, commit)));
+        // Convert to entries with repo URL for PR links
+        const entries = enrichedCommits.map(c => toCommitEntry(c, repoUrl));
+        // Get the tag date
+        const date = getTagDate(tag);
+        // Add version section
+        (0, changelog_1.addVersionSection)(changelogPath, tag, date, entries, unreleasedHeader);
+        core.info(`  Added ${tag} (${date}) with ${entries.length} entries`);
+    }
+    return missingTags.length;
+}
+/**
+ * Handle push to main branch - add new commits to Unreleased section
+ */
+async function handleMainPush(octokit, owner, repo, changelogPath, unreleasedHeader) {
+    core.info('Handling push to main branch');
+    // First, check if we need to backfill missing tags
+    const backfilledCount = await backfillChangelog(octokit, owner, repo, changelogPath, unreleasedHeader);
+    if (backfilledCount > 0) {
+        core.info(`\nBackfilled ${backfilledCount} version(s)`);
+    }
+    // Get the latest tag
+    const latestTag = getLatestTag();
+    core.info(latestTag ? `Latest tag: ${latestTag}` : 'No existing tags found');
+    // Get commits since the last tag
+    const commits = getCommitsSince(latestTag);
+    core.info(`Found ${commits.length} commits since ${latestTag || 'beginning'}`);
+    if (commits.length === 0) {
+        core.info('No new commits to process');
+        return;
+    }
+    // Filter out merge commits and already-tracked entries
+    const newCommits = filterCommits(commits, changelogPath);
+    core.info(`${newCommits.length} commits after filtering`);
+    if (newCommits.length === 0) {
+        core.info('All commits are already in the changelog');
+        return;
+    }
+    // Enrich commits with PR numbers and author handles
+    core.info('Looking up PR numbers for commits...');
+    const enrichedCommits = await Promise.all(newCommits.map(commit => enrichCommitWithPR(octokit, owner, repo, commit)));
+    // Convert to changelog entries with repo URL for PR links
+    const repoUrl = `https://github.com/${owner}/${repo}`;
+    const entries = enrichedCommits.map(c => toCommitEntry(c, repoUrl));
+    // Log what we're adding
+    core.info(`Adding ${entries.length} entries to changelog:`);
+    entries.forEach(entry => {
+        const prSuffix = entry.prNumber ? ` (#${entry.prNumber})` : '';
+        core.info(`  - ${entry.message} by @${entry.author}${prSuffix}`);
+    });
+    // Add to changelog
+    (0, changelog_1.addToUnreleased)(changelogPath, entries, unreleasedHeader);
+    core.info(`Updated ${changelogPath}`);
+}
+/**
+ * Handle tag push - promote Unreleased to version section
+ */
+function handleTagPush(changelogPath, unreleasedHeader) {
+    const tagName = getTagName();
+    if (!tagName) {
+        throw new Error('Could not extract tag name from GITHUB_REF');
+    }
+    core.info(`Handling tag push: ${tagName}`);
+    // Check if there's content in unreleased
+    const unreleasedContent = (0, changelog_1.getUnreleasedContent)(changelogPath, unreleasedHeader);
+    if (!unreleasedContent) {
+        core.warning('Unreleased section is empty - nothing to promote');
+        return;
+    }
+    // Promote unreleased to version
+    const date = getCurrentDate();
+    (0, changelog_1.promoteUnreleasedToVersion)(changelogPath, tagName, date, unreleasedHeader);
+    core.info(`Promoted Unreleased section to ${tagName} (${date})`);
+}
+async function main() {
+    try {
+        // Get inputs
+        const changelogPath = core.getInput('changelog') || './CHANGES.md';
+        const unreleasedHeader = core.getInput('unreleased-header') || '## Unreleased';
+        const token = core.getInput('github-token', { required: true });
+        // Get repository info
+        const [owner, repo] = (process.env.GITHUB_REPOSITORY || '').split('/');
+        if (!owner || !repo) {
+            throw new Error('Could not determine repository from GITHUB_REPOSITORY');
+        }
+        // Create Octokit instance
+        const octokit = github.getOctokit(token);
+        // Configure git for pushing
+        configureGit(token);
+        // Determine what type of event we're handling
+        if (isTagPush()) {
+            // Tag push - promote Unreleased to version
+            handleTagPush(changelogPath, unreleasedHeader);
+            // Commit and push the changes
+            const tagName = getTagName();
+            commitAndPush(changelogPath, `chore: release ${tagName}`);
+        }
+        else {
+            // Branch push - add commits to Unreleased
+            await handleMainPush(octokit, owner, repo, changelogPath, unreleasedHeader);
+            // Commit and push the changes
+            commitAndPush(changelogPath, 'chore: update changelog');
+        }
+        core.info('Changelog update complete!');
+    }
+    catch (error) {
+        core.setFailed(`Failed to update changelog: ${error.message}`);
         process.exit(1);
     }
 }
 main();
-exports["default"] = main;
 
 
 /***/ }),
@@ -32957,7 +32786,7 @@ module.exports = parseParams
 /******/ 	// startup
 /******/ 	// Load entry module and return exports
 /******/ 	// This entry module is referenced by other modules so it can't be inlined
-/******/ 	var __webpack_exports__ = __nccwpck_require__(1730);
+/******/ 	var __webpack_exports__ = __nccwpck_require__(7869);
 /******/ 	module.exports = __webpack_exports__;
 /******/ 	
 /******/ })()
