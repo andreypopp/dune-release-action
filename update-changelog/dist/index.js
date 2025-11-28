@@ -30122,20 +30122,27 @@ function extractVersionChangelog(changelogPath, version, outputPath) {
 }
 /**
  * Format a commit entry for the changelog
- * Format: "- {message} by @{author} ([#{prNumber}](url))" or "- {message} by @{author}"
+ * Format: "- {message} by @{author} ([#{prNumber}](url))"
+ *      or "- {message} by @{author} ([sha](commit-url))" if no PR
+ *      or "- {message} by @{author}" if no PR and no SHA
  */
 function formatCommitEntry(entry) {
     const authorDisplay = entry.author.startsWith('@') ? entry.author : `@${entry.author}`;
-    let prSuffix = '';
-    if (entry.prNumber) {
-        if (entry.repoUrl) {
-            prSuffix = ` ([#${entry.prNumber}](${entry.repoUrl}/pull/${entry.prNumber}))`;
-        }
-        else {
-            prSuffix = ` (#${entry.prNumber})`;
-        }
+    let linkSuffix = '';
+    if (entry.prNumber && entry.repoUrl) {
+        // Link to PR
+        linkSuffix = ` ([#${entry.prNumber}](${entry.repoUrl}/pull/${entry.prNumber}))`;
     }
-    return `- ${entry.message} by ${authorDisplay}${prSuffix}`;
+    else if (entry.prNumber) {
+        // PR number without link
+        linkSuffix = ` (#${entry.prNumber})`;
+    }
+    else if (entry.commitSha && entry.repoUrl) {
+        // Link to commit (short SHA display)
+        const shortSha = entry.commitSha.substring(0, 7);
+        linkSuffix = ` ([${shortSha}](${entry.repoUrl}/commit/${entry.commitSha}))`;
+    }
+    return `- ${entry.message} by ${authorDisplay}${linkSuffix}`;
 }
 /**
  * Check if an entry (by message) already exists in the changelog
@@ -30633,6 +30640,7 @@ function toCommitEntry(commit, repoUrl) {
         message: cleanMessage,
         author: commit.authorHandle || commit.author, // Prefer GitHub handle
         prNumber: commit.prNumber,
+        commitSha: commit.sha, // Include SHA for commit link fallback
         repoUrl
     };
 }

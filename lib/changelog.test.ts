@@ -316,7 +316,18 @@ describe('formatCommitEntry', () => {
     assert.strictEqual(formatted, '- Add new feature by @davesnx (#123)');
   });
 
-  test('formats entry without PR number', () => {
+  test('formats entry with commit SHA when no PR (links to commit)', () => {
+    const entry = {
+      message: 'Fix bug',
+      author: 'davesnx',
+      commitSha: 'abc1234567890def',
+      repoUrl: 'https://github.com/davesnx/dune-release-action'
+    };
+    const formatted = formatCommitEntry(entry);
+    assert.strictEqual(formatted, '- Fix bug by @davesnx ([abc1234](https://github.com/davesnx/dune-release-action/commit/abc1234567890def))');
+  });
+
+  test('formats entry without PR or commit SHA', () => {
     const entry = { message: 'Fix bug', author: 'davesnx' };
     const formatted = formatCommitEntry(entry);
     assert.strictEqual(formatted, '- Fix bug by @davesnx');
@@ -326,6 +337,18 @@ describe('formatCommitEntry', () => {
     const entry = { message: 'Fix bug', author: '@davesnx' };
     const formatted = formatCommitEntry(entry);
     assert.strictEqual(formatted, '- Fix bug by @davesnx');
+  });
+
+  test('prefers PR link over commit link when both available', () => {
+    const entry = {
+      message: 'Add feature',
+      author: 'davesnx',
+      prNumber: 42,
+      commitSha: 'abc1234567890def',
+      repoUrl: 'https://github.com/davesnx/dune-release-action'
+    };
+    const formatted = formatCommitEntry(entry);
+    assert.strictEqual(formatted, '- Add feature by @davesnx ([#42](https://github.com/davesnx/dune-release-action/pull/42))');
   });
 });
 

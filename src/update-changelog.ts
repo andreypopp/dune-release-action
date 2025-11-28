@@ -229,6 +229,7 @@ function toCommitEntry(commit: CommitInfo, repoUrl: string): CommitEntry {
     message: cleanMessage,
     author: commit.authorHandle || commit.author,  // Prefer GitHub handle
     prNumber: commit.prNumber,
+    commitSha: commit.sha,  // Include SHA for commit link fallback
     repoUrl
   };
 }
