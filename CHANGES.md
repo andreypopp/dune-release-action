@@ -2,8 +2,6 @@
 
 ## Unreleased
 
-
-
 - fix(update-changelog): fix extra blank line after unreleased header by @davesnx ([#1](https://github.com/davesnx/dune-release-action/pull/1))
 - improve spacing and formatting for our changes.md by @davesnx ([#1](https://github.com/davesnx/dune-release-action/pull/1))
 - Format changelog better by @davesnx ([#1](https://github.com/davesnx/dune-release-action/pull/1))
@@ -29,6 +27,7 @@
 - Fix build and package by @davesnx
 - Push dist into repo by @davesnx
 - Skip build on distrib by @davesnx
+
 ## v0.1.0 (2025-10-14)
 
 - Push dist by @davesnx
