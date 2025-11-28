@@ -66,7 +66,7 @@ jobs:
       - run: opam install dune-release -y
 
       # Add the dune-release-action
-      - uses: @davesnx/dune-release-action@0.2
+      - uses: davesnx/dune-release-action@v0.2
         with:
           packages: 'your-package'
           github-token: ${{ secrets.GH_TOKEN }}
@@ -75,7 +75,7 @@ jobs:
 ### Advanced example (all options)
 
 ```yaml
-- uses: @davesnx/dune-release-action@0.2
+- uses: davesnx/dune-release-action@v0.2
   with:
     packages: 'your-package'              # (required) The package name(s) to publish to the opam-repository
     packages: |                           # you can pass multiple packages
