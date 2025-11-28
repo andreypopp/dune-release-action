@@ -4,9 +4,6 @@ on:
   push:
     branches:
       - main
-      - update-changelog  # TODO: remove after testing
-    tags:
-      - 'v*'
 
 permissions:
   contents: write
