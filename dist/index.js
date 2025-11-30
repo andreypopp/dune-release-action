@@ -30775,7 +30775,7 @@ local: ${config.local}
     /**
      * Run the full release pipeline
      */
-    async runRelease(packages, changelogPath, duneConfig, toGithubReleases, toOpamRepository) {
+    async runRelease(packages, changelogPath, duneConfig, toGithubReleases, toOpamRepository, includeSubmodules = false) {
         let versionChangelogPath = null;
         try {
             // Check dependencies first
@@ -30838,7 +30838,11 @@ local: ${config.local}
             await this.cloneOpamRepository(duneConfig.remote, duneConfig.local, duneConfig.user);
             // Distribute release archive
             core.startGroup('Distributing release archive');
-            this.runDuneRelease('distrib', ['-p', packages, '--skip-tests', '--skip-lint']);
+            const distribArgs = ['-p', packages, '--skip-tests', '--skip-lint'];
+            if (includeSubmodules) {
+                distribArgs.push('--include-submodules');
+            }
+            this.runDuneRelease('distrib', distribArgs);
             core.endGroup();
             // Publish to GitHub (conditional)
             if (toGithubReleases) {
@@ -30977,6 +30981,7 @@ async function main() {
         const toOpamRepository = core.getInput('to-opam-repository') !== 'false';
         const toGithubReleases = core.getInput('to-github-releases') !== 'false';
         const verbose = core.getInput('verbose') === 'true';
+        const includeSubmodules = core.getInput('include-submodules') === 'true';
         // Validate that we're running on a tag
         // Use TEST_OVERRIDE_GITHUB_REF if provided (for testing), otherwise use GITHUB_REF
         const testRefOverride = process.env.TEST_OVERRIDE_GITHUB_REF || '';
@@ -31015,11 +31020,12 @@ async function main() {
             core.info(`Opam fork: ${opamRepoFork}`);
             core.info(`Publish to GitHub: ${toGithubReleases ? 'Yes' : 'No'}`);
             core.info(`Submit to opam: ${toOpamRepository ? 'Yes' : 'No'}`);
+            core.info(`Include submodules: ${includeSubmodules ? 'Yes' : 'No'}`);
             core.info('================================');
         }
         // Run the release
         const releaseManager = new ReleaseManager(context, verbose);
-        await releaseManager.runRelease(packages, changelogPath, duneConfig, toGithubReleases, toOpamRepository);
+        await releaseManager.runRelease(packages, changelogPath, duneConfig, toGithubReleases, toOpamRepository, includeSubmodules);
         core.setOutput('release-status', 'success');
     }
     catch (error) {

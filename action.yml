@@ -28,6 +28,10 @@ inputs:
     description: 'If true, shows detailed logging output'
     required: false
     default: 'false'
+  include-submodules:
+    description: 'If true, includes git submodules in the distribution tarball'
+    required: false
+    default: 'false'
 
 outputs:
   version:
