@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.2.7
+
+- Support flexible changelog formats: `#`/`##`/`###` headers, two-segment versions (`0.11`), date-based versions [@davesnx](https://github.com/davesnx)
+
 ## v0.2.6
 
 - Add `dry-run` mode for validating setup without publishing [@davesnx](https://github.com/davesnx)

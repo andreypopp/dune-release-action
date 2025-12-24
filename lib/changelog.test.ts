@@ -241,6 +241,86 @@ This is a changelog for my project.
     assert.ok(entries.length >= 0);
   });
 
+  test('parses two-segment versions (e.g., 0.11)', () => {
+    const testFile = createTestFile(`# 0.11
+- Support for OCaml 5.4
+- Fix windows
+
+# 0.10
+- compatibility with OCaml 5.3
+
+# 0.9
+- initial version
+`);
+    const entries = parseChangelog(testFile);
+    assert.strictEqual(entries.length, 3);
+    assert.strictEqual(entries[0].version, '0.11');
+    assert.strictEqual(entries[1].version, '0.10');
+    assert.strictEqual(entries[2].version, '0.9');
+    assert.ok(entries[0].content.includes('Support for OCaml 5.4'));
+  });
+
+  test('parses single hash version headers', () => {
+    const testFile = createTestFile(`# 1.0.0
+- First stable release
+
+## 0.9.0
+- Beta release
+
+### 0.8.0
+- Alpha release
+`);
+    const entries = parseChangelog(testFile);
+    assert.strictEqual(entries.length, 3);
+    assert.strictEqual(entries[0].version, '1.0.0');
+    assert.strictEqual(entries[1].version, '0.9.0');
+    assert.strictEqual(entries[2].version, '0.8.0');
+  });
+
+  test('captures unreleased content before first version (no explicit header)', () => {
+    const testFile = createTestFile(`Some intro text
+
+- Unreleased feature 1
+- Unreleased feature 2
+
+# 0.11
+- Released feature
+`);
+    const entries = parseChangelog(testFile);
+    const unreleased = entries.find(e => e.version === 'unreleased');
+    assert.ok(unreleased);
+    assert.ok(unreleased.content.includes('Unreleased feature 1'));
+    const version = entries.find(e => e.version === '0.11');
+    assert.ok(version);
+    assert.ok(version.content.includes('Released feature'));
+  });
+
+  test('parses single-number versions', () => {
+    const testFile = createTestFile(`# v2
+- Version 2 changes
+
+# 1
+- Version 1 changes
+`);
+    const entries = parseChangelog(testFile);
+    assert.strictEqual(entries.length, 2);
+    assert.strictEqual(entries[0].version, '2');
+    assert.strictEqual(entries[1].version, '1');
+  });
+
+  test('parses date-based versions', () => {
+    const testFile = createTestFile(`# 20240101
+- New year release
+
+# 20231225
+- Christmas release
+`);
+    const entries = parseChangelog(testFile);
+    assert.strictEqual(entries.length, 2);
+    assert.strictEqual(entries[0].version, '20240101');
+    assert.strictEqual(entries[1].version, '20231225');
+  });
+
   test('handles very large changelog', () => {
     let content = '# Changelog\n\n';
     for (let i = 100; i >= 1; i--) {
@@ -385,6 +465,54 @@ describe('validateChangelog', () => {
 
     assert.strictEqual(validation.valid, true);
     assert.strictEqual(validation.hasVersionEntry, true);
+  });
+
+  test('matches two-segment version in changelog with three-segment tag', () => {
+    const testFile = createTestFile(`# 0.11
+- Support for OCaml 5.4
+`);
+    // Tag is v0.11.0, changelog has 0.11 - should match
+    const validation = validateChangelog(testFile, 'v0.11.0');
+
+    assert.strictEqual(validation.valid, true);
+    assert.strictEqual(validation.hasVersionEntry, true);
+  });
+
+  test('matches three-segment version in changelog with two-segment tag', () => {
+    const testFile = createTestFile(`## 0.11.0
+- Support for OCaml 5.4
+`);
+    // Tag is 0.11, changelog has 0.11.0 - should match
+    const validation = validateChangelog(testFile, '0.11');
+
+    assert.strictEqual(validation.valid, true);
+    assert.strictEqual(validation.hasVersionEntry, true);
+  });
+
+  test('validates single hash version headers', () => {
+    const testFile = createTestFile(`# 0.11
+- Feature A
+- Feature B
+`);
+    const validation = validateChangelog(testFile, '0.11');
+
+    assert.strictEqual(validation.valid, true);
+    assert.strictEqual(validation.hasVersionEntry, true);
+    assert.ok(validation.versionContent?.includes('Feature A'));
+  });
+
+  test('treats content before first version as unreleased', () => {
+    const testFile = createTestFile(`Some notes here
+
+- Pending change
+
+# 0.11
+- Released feature
+`);
+    const validation = validateChangelog(testFile, '0.11');
+
+    assert.strictEqual(validation.valid, true);
+    assert.strictEqual(validation.hasUnreleased, true);
   });
 });
 

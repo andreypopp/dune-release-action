@@ -16,57 +16,50 @@ export interface ChangelogValidation {
   errors: string[];
 }
 
-/**
- * Parse a changelog file (Markdown format)
- * Supports formats like:
- * ## v1.0.0 (2025-01-13)
- * ## 1.0.0
- * # Unreleased
- */
+const VERSION_PATTERN = /^#{1,3}\s+v?(\d+(?:\.\d+)*(?:-[a-zA-Z0-9.]+)?)\s*(?:\(([^)]+)\))?/;
+const TITLE_PATTERN = /^#\s+(Changelog|Changes)\s*$/i;
+
 export function parseChangelog(changelogPath: string): ChangelogEntry[] {
   try {
     const content = Fs.readFileSync(changelogPath, 'utf-8');
     const entries: ChangelogEntry[] = [];
-
-    // Split by headers (## or #)
     const lines = content.split('\n');
+
     let currentEntry: ChangelogEntry | null = null;
     let currentContent: string[] = [];
+    let foundFirstVersion = false;
+    let unreleasedContent: string[] = [];
 
     for (const line of lines) {
-      // Match version headers: ## v1.0.0 or ## 1.0.0 or ## v1.0.0 (2025-01-13)
-      const versionMatch = line.match(/^##\s+v?(\d+\.\d+\.\d+(?:-[a-zA-Z0-9.]+)?)\s*(?:\(([^)]+)\))?/);
-      // Match unreleased header: # Unreleased or ## Unreleased
-      const unreleasedMatch = line.match(/^#{1,2}\s+Unreleased/i);
+      const versionMatch = line.match(VERSION_PATTERN);
 
-      if (versionMatch || unreleasedMatch) {
-        // Save previous entry if exists
+      if (versionMatch) {
+        if (!foundFirstVersion && unreleasedContent.length > 0) {
+          const trimmed = unreleasedContent.join('\n').trim();
+          if (trimmed) {
+            entries.push({ version: 'unreleased', content: trimmed });
+          }
+        }
+        foundFirstVersion = true;
+
         if (currentEntry) {
           currentEntry.content = currentContent.join('\n').trim();
           entries.push(currentEntry);
         }
 
-        // Start new entry
-        if (versionMatch) {
-          currentEntry = {
-            version: versionMatch[1],
-            date: versionMatch[2],
-            content: ''
-          };
-        } else if (unreleasedMatch) {
-          currentEntry = {
-            version: 'unreleased',
-            content: ''
-          };
-        }
+        currentEntry = {
+          version: versionMatch[1],
+          date: versionMatch[2],
+          content: ''
+        };
         currentContent = [];
-      } else if (currentEntry) {
-        // Add content to current entry
+      } else if (foundFirstVersion && currentEntry) {
         currentContent.push(line);
+      } else if (!foundFirstVersion && !line.match(TITLE_PATTERN)) {
+        unreleasedContent.push(line);
       }
     }
 
-    // Save last entry
     if (currentEntry) {
       currentEntry.content = currentContent.join('\n').trim();
       entries.push(currentEntry);
@@ -78,9 +71,15 @@ export function parseChangelog(changelogPath: string): ChangelogEntry[] {
   }
 }
 
-/**
- * Validate changelog for a specific version
- */
+// Strip 'v' prefix and trailing '.0' segments so 0.11 matches 0.11.0
+function normalizeVersion(version: string): string {
+  return version.replace(/^v/, '').replace(/(?:\.0)+$/, '');
+}
+
+function versionsMatch(a: string, b: string): boolean {
+  return normalizeVersion(a) === normalizeVersion(b);
+}
+
 export function validateChangelog(
   changelogPath: string,
   expectedVersion: string
@@ -94,14 +93,12 @@ export function validateChangelog(
   };
 
   try {
-    // Check if file exists
     if (!Fs.existsSync(changelogPath)) {
       validation.valid = false;
       validation.errors.push(`Changelog file not found: ${changelogPath}`);
       return validation;
     }
 
-    // Parse changelog
     const entries = parseChangelog(changelogPath);
 
     if (entries.length === 0) {
@@ -110,10 +107,6 @@ export function validateChangelog(
       return validation;
     }
 
-    // Normalize version (remove 'v' prefix if present)
-    const normalizedVersion = expectedVersion.replace(/^v/, '');
-
-    // Check for unreleased content
     const unreleasedEntry = entries.find(e => e.version === 'unreleased');
     if (unreleasedEntry && unreleasedEntry.content.trim().length > 0) {
       validation.hasUnreleased = true;
@@ -123,10 +116,8 @@ export function validateChangelog(
       );
     }
 
-    // Check for version entry
     const versionEntry = entries.find(e =>
-      e.version === normalizedVersion ||
-      e.version === `v${normalizedVersion}`
+      e.version !== 'unreleased' && versionsMatch(e.version, expectedVersion)
     );
 
     if (!versionEntry) {
@@ -142,7 +133,6 @@ export function validateChangelog(
     validation.hasVersionEntry = true;
     validation.versionContent = versionEntry.content;
 
-    // Validate version entry has content
     if (!versionEntry.content || versionEntry.content.trim().length === 0) {
       validation.valid = false;
       validation.errors.push(`Changelog entry for ${expectedVersion} is empty`);
