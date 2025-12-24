@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.6
+
+- Add `dry-run` mode for validating setup without publishing [@davesnx](https://github.com/davesnx)
+- Add `github-release-url` and `opam-pr-url` outputs [@davesnx](https://github.com/davesnx)
+- Make `ReleaseManager` testable via dependency injection [@davesnx](https://github.com/davesnx)
+
 ## v0.2.5
 
 - Support `packages` as YAML list or JSON array format [@davesnx](https://github.com/davesnx)

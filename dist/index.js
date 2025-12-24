@@ -30466,7 +30466,6 @@ const fs_1 = __importDefault(__nccwpck_require__(9896));
 const path_1 = __importDefault(__nccwpck_require__(6928));
 const os_1 = __importDefault(__nccwpck_require__(857));
 const changelog_1 = __nccwpck_require__(7900);
-// Default executor implementation using real system calls
 const defaultExecutor = {
     exec(command, options = {}) {
         const result = (0, child_process_1.execSync)(command, {
@@ -30755,9 +30754,6 @@ local: ${config.local}
         const fullCommand = `opam exec -- dune-release ${command} ${args.join(' ')}`;
         this.exec(fullCommand);
     }
-    /**
-     * Delete tag on failure. Throws TagDeletionError after cleanup.
-     */
     deleteTag() {
         const tagName = this.context.ref.replace('refs/tags/', '');
         this.info(`Attempting to delete tag ${tagName}`);
@@ -30810,7 +30806,6 @@ local: ${config.local}
             // Setup
             this.configureGit();
             const version = this.extractVersion();
-            // Log mode
             if (dryRun) {
                 core.notice('DRY RUN MODE - No releases will be published, no PRs submitted');
             }
@@ -30829,21 +30824,17 @@ local: ${config.local}
             // Validate and extract changelog
             core.startGroup('Validating changelog');
             const validation = (0, changelog_1.validateChangelog)(changelogPath, version);
-            // Display warnings
             if (validation.warnings.length > 0) {
                 validation.warnings.forEach(warning => core.warning(warning));
             }
-            // Display errors and fail if invalid
             if (!validation.valid) {
                 validation.errors.forEach(error => core.error(error));
                 throw new Error('Changelog validation failed. Please fix the issues and try again.');
             }
-            // Extract version-specific changelog to temporary file
             const changelogFilename = path_1.default.basename(changelogPath, path_1.default.extname(changelogPath));
             const absoluteChangelogPath = path_1.default.resolve(changelogPath);
             versionChangelogPath = path_1.default.join(path_1.default.dirname(absoluteChangelogPath), `${changelogFilename}-${version}${path_1.default.extname(changelogPath)}`);
             (0, changelog_1.extractVersionChangelog)(absoluteChangelogPath, version, versionChangelogPath);
-            // Log the extracted content for verification
             try {
                 const extractedContent = this.executor.readFile(versionChangelogPath);
                 core.info(`Created version-specific changelog at: ${versionChangelogPath}`);
@@ -30905,7 +30896,6 @@ local: ${config.local}
                 core.warning('Skipping GitHub release publication');
                 core.endGroup();
             }
-            // Package opam release (always needed for validation, even in dry-run)
             core.startGroup(`Packaging opam release for ${packages}`);
             const opamPkgArgs = ['pkg', '-p', packages, '--yes', `--change-log=${changelogPath}`];
             if (buildDir) {
@@ -30913,11 +30903,9 @@ local: ${config.local}
             }
             this.runDuneRelease('opam', opamPkgArgs);
             core.endGroup();
-            // Construct opam PR URL (used for output and logging)
             const opamBranch = `release-${packages.replace(/,/g, '-')}-${version}`;
             const effectiveUser = duneConfig.user;
             const opamPrUrl = `https://github.com/${opamRepository.owner}/${opamRepository.repo}/compare/master...${effectiveUser}:opam-repository:${opamBranch}`;
-            // Submit to opam repository (conditional)
             if (dryRun) {
                 core.startGroup('Submitting to opam repository (dry-run)');
                 core.info('DRY RUN: Would submit to opam repository');
@@ -30928,14 +30916,7 @@ local: ${config.local}
                 core.startGroup('Submitting to opam repository');
                 process.env.DUNE_RELEASE_DELEGATE = 'github-dune-release';
                 process.env.GITHUB_TOKEN = this.context.token;
-                // Ensure we're in the project directory
-                try {
-                    this.executor.chdir(this.context.workspace);
-                }
-                catch (error) {
-                    core.error(`Failed to change to workspace directory: ${error.message}`);
-                    throw new Error(`Could not change to workspace directory ${this.context.workspace}: ${error.message}`);
-                }
+                this.executor.chdir(this.context.workspace);
                 const opamSubmitArgs = ['submit', '-p', packages, '--yes', `--change-log=${changelogPath}`];
                 if (buildDir) {
                     opamSubmitArgs.push(`--build-dir=${buildDir}`);
@@ -30950,7 +30931,6 @@ local: ${config.local}
                 core.warning('Skipping submission to opam-repository');
                 core.endGroup();
             }
-            // Success notification
             if (dryRun) {
                 core.notice(`DRY RUN completed for ${tagName} - validation passed!`);
                 core.notice(`GitHub release URL (if published): ${githubReleaseUrl}`);
@@ -31010,7 +30990,6 @@ local: ${config.local}
                 core.error('Please check that your GH_TOKEN secret is valid and not expired');
             }
             core.error(`Release failed: ${errorMessage}`);
-            // Skip tag deletion in dry-run mode or validation-only mode
             if (dryRun) {
                 core.warning('DRY RUN: Skipping tag deletion on failure');
             }
@@ -31023,7 +31002,6 @@ local: ${config.local}
             throw error;
         }
         finally {
-            // Clean up temporary changelog file
             if (versionChangelogPath && this.executor.fileExists(versionChangelogPath)) {
                 try {
                     this.executor.unlinkSync(versionChangelogPath);
@@ -31040,7 +31018,6 @@ exports.ReleaseManager = ReleaseManager;
 async function main() {
     try {
         const packagesInput = core.getInput('packages', { required: true }).trim();
-        // Supports: JSON array, YAML list (newline-separated), comma-separated, or single package
         let packagesArray;
         if (packagesInput.startsWith('[') && packagesInput.endsWith(']')) {
             packagesArray = JSON.parse(packagesInput);
@@ -31121,13 +31098,8 @@ async function main() {
         process.exit(1);
     }
 }
-// Only run main() when executed directly, not when imported for testing
-// Check for common test environment indicators
-const isTestEnvironment = process.env.NODE_TEST_CONTEXT !== undefined ||
-    process.env.VITEST !== undefined ||
-    process.env.JEST_WORKER_ID !== undefined ||
-    process.argv.some(arg => arg.includes('--test'));
-if (!isTestEnvironment) {
+const isTest = process.env.NODE_TEST_CONTEXT !== undefined || process.argv.some(arg => arg.includes('--test'));
+if (!isTest) {
     main();
 }
 exports["default"] = main;
