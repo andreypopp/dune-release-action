@@ -1,8 +1,11 @@
 # Changelog
 
-## v0.2.4
+## v0.2.5
 
 - Support `packages` as YAML list or JSON array format [@davesnx](https://github.com/davesnx)
+
+## v0.2.4
+
 - Add `opam-repository` option to target custom opam repositories (default: `ocaml/opam-repository`) [@davesnx](https://github.com/davesnx)
 - Add `build-dir` option to specify custom build directory for dune-release [@davesnx](https://github.com/davesnx)
 - Add `publish-message` option for custom GitHub release messages [@davesnx](https://github.com/davesnx)
