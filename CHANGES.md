@@ -1,11 +1,8 @@
 # Changelog
 
-## v0.2.8
+## v0.2.9
 
-- Simplify opam-repository cloning (dune-release handles upstream sync) [@davesnx](https://github.com/davesnx)
-
-## v0.2.7
-
+- Clone upstream opam-repository instead of fork (simpler, always latest) [@davesnx](https://github.com/davesnx)
 - Support flexible changelog formats: `#`/`##`/`###` headers, two-segment versions (`0.11`), date-based versions [@davesnx](https://github.com/davesnx)
 
 ## v0.2.6

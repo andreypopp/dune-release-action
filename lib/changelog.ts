@@ -47,11 +47,11 @@ export function parseChangelog(changelogPath: string): ChangelogEntry[] {
           entries.push(currentEntry);
         }
 
-        currentEntry = {
-          version: versionMatch[1],
-          date: versionMatch[2],
-          content: ''
-        };
+          currentEntry = {
+            version: versionMatch[1],
+            date: versionMatch[2],
+            content: ''
+          };
         currentContent = [];
       } else if (foundFirstVersion && currentEntry) {
         currentContent.push(line);
